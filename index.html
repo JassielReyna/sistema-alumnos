@@ -185,10 +185,10 @@
             try { await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text: mensaje }) }); } catch (e) {}
         }
 
-        // --- GENERAR TABLA FILTRADA ---
+        // --- GENERAR TABLA FILTRADA (CRUCE MANUAL Y SEGURO) ---
         async function generarTabla() {
             const fecha = document.getElementById('filtro-fecha').value;
-            const grupo = document.getElementById('filtro-grupo').value;
+            const grupoFiltro = document.getElementById('filtro-grupo').value;
             const tablaCuerpo = document.getElementById('tabla-asistencias');
             const btnExcel = document.getElementById('btn-descarga-excel');
 
@@ -197,54 +197,86 @@
             tablaCuerpo.innerHTML = "<tr><td colspan='5'>Cargando datos...</td></tr>";
             btnExcel.style.display = 'none';
 
-            // Usamos inner join seguro para extraer todo
-            const { data, error } = await clienteSupabase
-                .from('asistencias_escuela')
-                .select('hora_entrada, hora_salida, alumnos_escuela!inner(nombre, paterno, materno, grupo, celular)')
-                .eq('fecha', fecha)
-                .order('hora_entrada', { ascending: false });
+            try {
+                // 1. Obtener los registros de asistencia de la fecha seleccionada
+                const { data: asistencias, error: errorAsistencias } = await clienteSupabase
+                    .from('asistencias_escuela')
+                    .select('alumno_id, hora_entrada, hora_salida')
+                    .eq('fecha', fecha)
+                    .order('hora_entrada', { ascending: false });
 
-            if (error || !data || data.length === 0) {
-                tablaCuerpo.innerHTML = "<tr><td colspan='5'>No hay registros para esta fecha.</td></tr>";
-                datosTablaActual = [];
-                return;
-            }
-
-            let datosFiltrados = data;
-            if (grupo !== "") {
-                datosFiltrados = data.filter(registro => registro.alumnos_escuela.grupo === grupo);
-            }
-
-            if (datosFiltrados.length === 0) {
-                tablaCuerpo.innerHTML = "<tr><td colspan='5'>No hay registros para este grupo.</td></tr>";
-                datosTablaActual = [];
-                return;
-            }
-
-            datosTablaActual = datosFiltrados; 
-            tablaCuerpo.innerHTML = ""; 
-
-            datosFiltrados.forEach((registro) => {
-                const al = registro.alumnos_escuela;
-                const nombreCompleto = `${al.paterno} ${al.materno} ${al.nombre}`;
-                const celularLimpio = al.celular ? al.celular.replace(/\D/g, '') : '';
-                
-                let linkWA = "Sin número";
-                if (celularLimpio.length >= 10) {
-                    const mensajeWA = encodeURIComponent(`🏫 Aviso Escolar: Buen día, le informamos que ${al.nombre} ha registrado un movimiento en la entrada.`);
-                    linkWA = `<a href="https://wa.me/52${celularLimpio}?text=${mensajeWA}" target="_blank" class="btn-wa">📲 WhatsApp</a>`;
+                if (errorAsistencias || !asistencias || asistencias.length === 0) {
+                    tablaCuerpo.innerHTML = "<tr><td colspan='5'>No hay registros para esta fecha.</td></tr>";
+                    datosTablaActual = [];
+                    return;
                 }
 
-                tablaCuerpo.innerHTML += `
-                    <tr>
-                        <td><strong>${al.grupo}</strong></td>
-                        <td class="nombre-alumno">${nombreCompleto}</td>
-                        <td class="hora-entrada">${registro.hora_entrada || "---"}</td>
-                        <td class="hora-salida">${registro.hora_salida || "---"}</td>
-                        <td>${linkWA}</td>
-                    </tr>`;
-            });
-            btnExcel.style.display = 'inline-block';
+                // 2. Extraer los IDs únicos de los alumnos que asistieron
+                const idsAlumnos = [...new Set(asistencias.map(a => a.alumno_id))];
+
+                // 3. Obtener los datos de esos alumnos (filtrando por grupo si es necesario)
+                let queryAlumnos = clienteSupabase
+                    .from('alumnos_escuela')
+                    .select('id, nombre, paterno, materno, grupo, celular')
+                    .in('id', idsAlumnos);
+
+                if (grupoFiltro !== "") {
+                    queryAlumnos = queryAlumnos.eq('grupo', grupoFiltro);
+                }
+
+                const { data: alumnos, error: errorAlumnos } = await queryAlumnos;
+
+                if (errorAlumnos || !alumnos || alumnos.length === 0) {
+                    tablaCuerpo.innerHTML = "<tr><td colspan='5'>No hay registros para este grupo.</td></tr>";
+                    datosTablaActual = [];
+                    return;
+                }
+
+                // 4. Cruzar los datos y construir la tabla
+                datosTablaActual = [];
+                tablaCuerpo.innerHTML = ""; 
+
+                asistencias.forEach(asistencia => {
+                    const alumno = alumnos.find(a => a.id === asistencia.alumno_id);
+                    
+                    if (alumno) { // Solo si el alumno coincide con el filtro de grupo
+                        // Guardar la estructura para el Excel
+                        datosTablaActual.push({
+                            hora_entrada: asistencia.hora_entrada,
+                            hora_salida: asistencia.hora_salida,
+                            alumnos_escuela: alumno
+                        });
+
+                        const nombreCompleto = `${alumno.paterno} ${alumno.materno} ${alumno.nombre}`;
+                        const celularLimpio = alumno.celular ? alumno.celular.replace(/\D/g, '') : '';
+                        
+                        let linkWA = "Sin número";
+                        if (celularLimpio.length >= 10) {
+                            const mensajeWA = encodeURIComponent(`🏫 Aviso Escolar: Buen día, le informamos que ${alumno.nombre} ha registrado un movimiento en la entrada.`);
+                            linkWA = `<a href="https://wa.me/52${celularLimpio}?text=${mensajeWA}" target="_blank" class="btn-wa">📲 WhatsApp</a>`;
+                        }
+
+                        tablaCuerpo.innerHTML += `
+                            <tr>
+                                <td><strong>${alumno.grupo}</strong></td>
+                                <td class="nombre-alumno">${nombreCompleto}</td>
+                                <td class="hora-entrada">${asistencia.hora_entrada || "---"}</td>
+                                <td class="hora-salida">${asistencia.hora_salida || "---"}</td>
+                                <td>${linkWA}</td>
+                            </tr>`;
+                    }
+                });
+
+                if (datosTablaActual.length === 0) {
+                     tablaCuerpo.innerHTML = "<tr><td colspan='5'>No hay registros para este grupo.</td></tr>";
+                } else {
+                     btnExcel.style.display = 'inline-block';
+                }
+
+            } catch (error) {
+                console.error("Error generando tabla:", error);
+                tablaCuerpo.innerHTML = "<tr><td colspan='5'>Error al cargar los datos.</td></tr>";
+            }
         }
 
         // --- ESCANEO EXITOSO ---
