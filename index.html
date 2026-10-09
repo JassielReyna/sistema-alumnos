@@ -60,9 +60,9 @@
 
     <!-- PANEL DE REPORTES Y FILTROS -->
     <div class="panel-reportes">
-        <button id="btn-toggle" class="btn-principal btn-toggle" onclick="toggleReportes()">📊 Ocultar Registros</button>
+        <button id="btn-toggle" class="btn-principal btn-toggle" onclick="toggleReportes()">📊 Ver Registros de Asistencia</button>
         
-        <div id="seccion-reportes" style="display: block;">
+        <div id="seccion-reportes" style="display: none;">
             <div class="controles-filtro">
                 <div>
                     <label><strong>Fecha: </strong></label>
@@ -90,7 +90,7 @@
                         </tr>
                     </thead>
                     <tbody id="tabla-asistencias">
-                        <tr><td colspan="5">Cargando datos...</td></tr>
+                        <tr><td colspan="5">Selecciona una fecha y presiona "Generar Tabla"</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -103,18 +103,22 @@
         const LLAVE_PUBLICA = 'sb_publishable_rcACwicJA2Guh2Pth55S7g_qs8VcoI9';
         const clienteSupabase = supabase.createClient(URL_PROYECTO, LLAVE_PUBLICA);
 
-        // --- TOKEN DE TELEGRAM (RECUERDA PEGAR TUS CLAVES AQUÍ) ---
+        // --- TOKEN DE TELEGRAM ---
         const PARTE_1_TOKEN = '8887434969'; 
         const PARTE_2_TOKEN = 'AAH7a_QS4GqqjdFu0xnW1VCBVpP6IDPstn4'; 
         const TOKEN_TELEGRAM = PARTE_1_TOKEN + ':' + PARTE_2_TOKEN;
 
-        // Variables Globales
         let datosTablaActual = []; 
 
-        // Configurar fecha por defecto en el filtro (Hoy)
-        const hoy = new Date();
-        const fechaHoyLocal = hoy.toLocaleDateString('sv-SE');
-        document.getElementById('filtro-fecha').value = fechaHoyLocal;
+        // Generar fecha en formato estricto YYYY-MM-DD
+        function obtenerFechaLocal() {
+            const hoy = new Date();
+            const año = hoy.getFullYear();
+            const mes = String(hoy.getMonth() + 1).padStart(2, '0');
+            const dia = String(hoy.getDate()).padStart(2, '0');
+            return `${año}-${mes}-${dia}`;
+        }
+        document.getElementById('filtro-fecha').value = obtenerFechaLocal();
 
         // --- SISTEMA DE SONIDO ---
         const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -168,21 +172,20 @@
             if (seccion.style.display === 'none') {
                 seccion.style.display = 'block';
                 btn.innerText = "🔼 Ocultar Registros";
-                generarTabla(); // Generar tabla al abrir por si acaso
+                generarTabla(); 
             } else {
                 seccion.style.display = 'none';
                 btn.innerText = "📊 Ver Registros de Asistencia";
             }
         }
 
-        // --- ENVIAR TELEGRAM ---
         async function enviarTelegram(chatId, mensaje) {
             if (!chatId || PARTE_1_TOKEN === 'PEGAR_AQUI_LOS_NUMEROS') return;
             const url = `https://api.telegram.org/bot${TOKEN_TELEGRAM}/sendMessage`;
             try { await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text: mensaje }) }); } catch (e) {}
         }
 
-        // --- GENERAR TABLA FILTRADA (AHORA CON FILTRO JAVASCRIPT A PRUEBA DE FALLOS) ---
+        // --- GENERAR TABLA FILTRADA ---
         async function generarTabla() {
             const fecha = document.getElementById('filtro-fecha').value;
             const grupo = document.getElementById('filtro-grupo').value;
@@ -194,10 +197,10 @@
             tablaCuerpo.innerHTML = "<tr><td colspan='5'>Cargando datos...</td></tr>";
             btnExcel.style.display = 'none';
 
-            // Extraemos todos los registros de la fecha
+            // Usamos inner join seguro para extraer todo
             const { data, error } = await clienteSupabase
                 .from('asistencias_escuela')
-                .select('hora_entrada, hora_salida, alumnos_escuela(nombre, paterno, materno, grupo, celular)')
+                .select('hora_entrada, hora_salida, alumnos_escuela!inner(nombre, paterno, materno, grupo, celular)')
                 .eq('fecha', fecha)
                 .order('hora_entrada', { ascending: false });
 
@@ -207,7 +210,6 @@
                 return;
             }
 
-            // Aplicamos el filtro de grupo directamente en JavaScript para evitar errores de Supabase
             let datosFiltrados = data;
             if (grupo !== "") {
                 datosFiltrados = data.filter(registro => registro.alumnos_escuela.grupo === grupo);
@@ -264,31 +266,32 @@
                     reiniciarEscaner(); return;
                 }
 
-                const ahora = new Date();
-                const fechaHoy = ahora.toLocaleDateString('sv-SE'); 
-                const horaActual = ahora.toLocaleTimeString('en-GB'); 
+                const fechaHoyEstricta = obtenerFechaLocal();
+                const horaActual = new Date().toLocaleTimeString('en-GB'); 
 
-                const { data: regHoy } = await clienteSupabase.from('asistencias_escuela').select('*').eq('alumno_id', alumno.id).eq('fecha', fechaHoy).limit(1); 
+                const { data: regHoy } = await clienteSupabase.from('asistencias_escuela').select('*').eq('alumno_id', alumno.id).eq('fecha', fechaHoyEstricta).limit(1); 
                 const asistencia = (regHoy && regHoy.length > 0) ? regHoy[0] : null;
 
                 if (!asistencia) {
-                    await clienteSupabase.from('asistencias_escuela').insert([{ alumno_id: alumno.id, fecha: fechaHoy, hora_entrada: horaActual }]);
+                    await clienteSupabase.from('asistencias_escuela').insert([{ alumno_id: alumno.id, fecha: fechaHoyEstricta, hora_entrada: horaActual }]);
                     reproducirSonido('exito');
-                    statusText.innerText = `✅ ENTRADA: ${alumno.nombre} ${alumno.paterno}`; statusText.style.color = "green";
-                    enviarTelegram(alumno.telegram_chat_id, `🏫 AVISO ESCOLAR\n\n🟢 ENTRADA REGISTRADA\nAlumno(a): ${alumno.nombre} ${alumno.paterno}\nGrupo: ${alumno.grupo}\nHora: ${horaActual}`);
+                    statusText.innerText = `✅ ENTRADA: ${alumno.nombre} ${alumno.paterno} ${alumno.materno}`; statusText.style.color = "green";
+                    enviarTelegram(alumno.telegram_chat_id, `🏫 AVISO ESCOLAR\n\n🟢 ENTRADA REGISTRADA\nAlumno(a): ${alumno.nombre} ${alumno.paterno} ${alumno.materno}\nGrupo: ${alumno.grupo}\nHora: ${horaActual}`);
                 } else if (!asistencia.hora_salida) {
                     await clienteSupabase.from('asistencias_escuela').update({ hora_salida: horaActual }).eq('id', asistencia.id);
                     reproducirSonido('exito');
-                    statusText.innerText = `👋 SALIDA: ${alumno.nombre} ${alumno.paterno}`; statusText.style.color = "#2980b9";
-                    enviarTelegram(alumno.telegram_chat_id, `🏫 AVISO ESCOLAR\n\n🔵 SALIDA REGISTRADA\nAlumno(a): ${alumno.nombre} ${alumno.paterno}\nGrupo: ${alumno.grupo}\nHora: ${horaActual}`);
+                    statusText.innerText = `👋 SALIDA: ${alumno.nombre} ${alumno.paterno} ${alumno.materno}`; statusText.style.color = "#2980b9";
+                    enviarTelegram(alumno.telegram_chat_id, `🏫 AVISO ESCOLAR\n\n🔵 SALIDA REGISTRADA\nAlumno(a): ${alumno.nombre} ${alumno.paterno} ${alumno.materno}\nGrupo: ${alumno.grupo}\nHora: ${horaActual}`);
                 } else {
                     reproducirSonido('alerta');
-                    statusText.innerText = `⚠️ ${alumno.nombre} ya registró su salida hoy.`;
+                    statusText.innerText = `⚠️ ${alumno.nombre} ${alumno.paterno} ya registró su salida hoy.`;
                     statusText.style.color = "#d35400";
                 }
                 
-                // AHORA SÍ: Sin importar si fue Entrada, Salida o Repetido, la tabla siempre se actualiza.
-                if(document.getElementById('filtro-fecha').value === fechaHoyLocal) { generarTabla(); }
+                // Actualiza la tabla automáticamente si está abierta en el día de hoy
+                if(document.getElementById('filtro-fecha').value === fechaHoyEstricta && document.getElementById('seccion-reportes').style.display !== 'none') { 
+                    generarTabla(); 
+                }
 
             } catch (error) {}
             reiniciarEscaner();
@@ -347,10 +350,8 @@
             });
         }, 500);
         
-        // --- INICIALIZAR EL SISTEMA AL ABRIR LA PÁGINA ---
         escaner.render(onScanSuccess, onScanFailure);
         cargarGrupos();
-        generarTabla(); // Carga la tabla de inmediato
     </script>
 </body>
 </html>
