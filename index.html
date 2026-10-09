@@ -70,7 +70,7 @@
                 </div>
                 <div>
                     <label><strong>Grupo: </strong></label>
-                    <select id="filtro-grupo" onchange="generarTabla()">
+                    <select id="filtro-grupo">
                         <option value="">Todos los grupos</option>
                     </select>
                 </div>
@@ -103,9 +103,9 @@
         const LLAVE_PUBLICA = 'sb_publishable_rcACwicJA2Guh2Pth55S7g_qs8VcoI9';
         const clienteSupabase = supabase.createClient(URL_PROYECTO, LLAVE_PUBLICA);
 
-        // --- TOKEN DE TELEGRAM ---
-        const PARTE_1_TOKEN = '8887434969'; 
-        const PARTE_2_TOKEN = 'AAH7a_QS4GqqjdFu0xnW1VCBVpP6IDPstn4'; 
+        // --- TOKEN DE TELEGRAM (RECUERDA PEGAR TUS CLAVES AQUÍ) ---
+        const PARTE_1_TOKEN = 'PEGAR_AQUI_LOS_NUMEROS'; 
+        const PARTE_2_TOKEN = 'PEGAR_AQUI_LAS_LETRAS'; 
         const TOKEN_TELEGRAM = PARTE_1_TOKEN + ':' + PARTE_2_TOKEN;
 
         let datosTablaActual = []; 
@@ -172,7 +172,6 @@
             if (seccion.style.display === 'none') {
                 seccion.style.display = 'block';
                 btn.innerText = "🔼 Ocultar Registros";
-                generarTabla(); 
             } else {
                 seccion.style.display = 'none';
                 btn.innerText = "📊 Ver Registros de Asistencia";
@@ -198,7 +197,6 @@
             btnExcel.style.display = 'none';
 
             try {
-                // 1. Obtener los registros de asistencia de la fecha seleccionada
                 const { data: asistencias, error: errorAsistencias } = await clienteSupabase
                     .from('asistencias_escuela')
                     .select('alumno_id, hora_entrada, hora_salida')
@@ -211,10 +209,8 @@
                     return;
                 }
 
-                // 2. Extraer los IDs únicos de los alumnos que asistieron
                 const idsAlumnos = [...new Set(asistencias.map(a => a.alumno_id))];
 
-                // 3. Obtener los datos de esos alumnos (filtrando por grupo si es necesario)
                 let queryAlumnos = clienteSupabase
                     .from('alumnos_escuela')
                     .select('id, nombre, paterno, materno, grupo, celular')
@@ -227,20 +223,18 @@
                 const { data: alumnos, error: errorAlumnos } = await queryAlumnos;
 
                 if (errorAlumnos || !alumnos || alumnos.length === 0) {
-                    tablaCuerpo.innerHTML = "<tr><td colspan='5'>No hay registros para este grupo.</td></tr>";
+                    tablaCuerpo.innerHTML = "<tr><td colspan='5'>No hay registros para este grupo en esta fecha.</td></tr>";
                     datosTablaActual = [];
                     return;
                 }
 
-                // 4. Cruzar los datos y construir la tabla
                 datosTablaActual = [];
                 tablaCuerpo.innerHTML = ""; 
 
                 asistencias.forEach(asistencia => {
                     const alumno = alumnos.find(a => a.id === asistencia.alumno_id);
                     
-                    if (alumno) { // Solo si el alumno coincide con el filtro de grupo
-                        // Guardar la estructura para el Excel
+                    if (alumno) { 
                         datosTablaActual.push({
                             hora_entrada: asistencia.hora_entrada,
                             hora_salida: asistencia.hora_salida,
@@ -268,7 +262,7 @@
                 });
 
                 if (datosTablaActual.length === 0) {
-                     tablaCuerpo.innerHTML = "<tr><td colspan='5'>No hay registros para este grupo.</td></tr>";
+                     tablaCuerpo.innerHTML = "<tr><td colspan='5'>No hay registros para este grupo en esta fecha.</td></tr>";
                 } else {
                      btnExcel.style.display = 'inline-block';
                 }
@@ -320,8 +314,8 @@
                     statusText.style.color = "#d35400";
                 }
                 
-                // Actualiza la tabla automáticamente si está abierta en el día de hoy
-                if(document.getElementById('filtro-fecha').value === fechaHoyEstricta && document.getElementById('seccion-reportes').style.display !== 'none') { 
+                // Actualiza la tabla automáticamente SOLO si el panel ya está abierto y visualizando el día de hoy
+                if(document.getElementById('filtro-fecha').value === fechaHoyEstricta && document.getElementById('seccion-reportes').style.display !== 'none' && datosTablaActual.length > 0) { 
                     generarTabla(); 
                 }
 
@@ -382,6 +376,7 @@
             });
         }, 500);
         
+        // --- INICIALIZAR EL SISTEMA AL ABRIR LA PÁGINA ---
         escaner.render(onScanSuccess, onScanFailure);
         cargarGrupos();
     </script>
