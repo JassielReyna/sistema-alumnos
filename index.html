@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Control de Acceso Escolar</title>
     
-    <!-- Librerías: Supabase, Escáner y Exportador a Excel -->
+    <!-- Librerías -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://unpkg.com/html5-qrcode"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
@@ -15,16 +15,8 @@
         h1 { color: #2c3e50; margin-bottom: 5px; }
         h3 { color: #7f8c8d; margin-top: 0; margin-bottom: 20px; font-weight: normal; }
         
-        #status { 
-            margin: 0 auto 15px auto; padding: 15px; font-weight: bold; font-size: 1.2em; 
-            color: #2980b9; background-color: white; border-radius: 8px; max-width: 450px; 
-            box-shadow: 0px 4px 10px rgba(0,0,0,0.08); 
-        }
-
-        #reader { 
-            width: 100%; max-width: 450px; margin: 0 auto; background: white; 
-            padding: 10px; border-radius: 8px; box-shadow: 0px 4px 10px rgba(0,0,0,0.1); 
-        }
+        #status { margin: 0 auto 15px auto; padding: 15px; font-weight: bold; font-size: 1.2em; color: #2980b9; background-color: white; border-radius: 8px; max-width: 450px; box-shadow: 0px 4px 10px rgba(0,0,0,0.08); }
+        #reader { width: 100%; max-width: 450px; margin: 0 auto; background: white; padding: 10px; border-radius: 8px; box-shadow: 0px 4px 10px rgba(0,0,0,0.1); }
         
         /* Controles y Filtros de Reportes */
         .panel-reportes { margin-top: 30px; background: white; padding: 20px; border-radius: 8px; max-width: 900px; margin-left: auto; margin-right: auto; box-shadow: 0px 4px 10px rgba(0,0,0,0.1); }
@@ -68,9 +60,9 @@
 
     <!-- PANEL DE REPORTES Y FILTROS -->
     <div class="panel-reportes">
-        <button id="btn-toggle" class="btn-principal btn-toggle" onclick="toggleReportes()">📊 Ver Registros de Asistencia</button>
+        <button id="btn-toggle" class="btn-principal btn-toggle" onclick="toggleReportes()">📊 Ocultar Registros</button>
         
-        <div id="seccion-reportes" style="display: none;">
+        <div id="seccion-reportes" style="display: block;">
             <div class="controles-filtro">
                 <div>
                     <label><strong>Fecha: </strong></label>
@@ -78,7 +70,7 @@
                 </div>
                 <div>
                     <label><strong>Grupo: </strong></label>
-                    <select id="filtro-grupo">
+                    <select id="filtro-grupo" onchange="generarTabla()">
                         <option value="">Todos los grupos</option>
                     </select>
                 </div>
@@ -98,7 +90,7 @@
                         </tr>
                     </thead>
                     <tbody id="tabla-asistencias">
-                        <tr><td colspan="5">Selecciona una fecha y presiona "Generar Tabla"</td></tr>
+                        <tr><td colspan="5">Cargando datos...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -111,7 +103,7 @@
         const LLAVE_PUBLICA = 'sb_publishable_rcACwicJA2Guh2Pth55S7g_qs8VcoI9';
         const clienteSupabase = supabase.createClient(URL_PROYECTO, LLAVE_PUBLICA);
 
-        // --- TOKEN DE TELEGRAM ---
+        // --- TOKEN DE TELEGRAM (RECUERDA PEGAR TUS CLAVES AQUÍ) ---
         const PARTE_1_TOKEN = '8887434969'; 
         const PARTE_2_TOKEN = 'AAH7a_QS4GqqjdFu0xnW1VCBVpP6IDPstn4'; 
         const TOKEN_TELEGRAM = PARTE_1_TOKEN + ':' + PARTE_2_TOKEN;
@@ -121,7 +113,8 @@
 
         // Configurar fecha por defecto en el filtro (Hoy)
         const hoy = new Date();
-        document.getElementById('filtro-fecha').value = hoy.toLocaleDateString('sv-SE');
+        const fechaHoyLocal = hoy.toLocaleDateString('sv-SE');
+        document.getElementById('filtro-fecha').value = fechaHoyLocal;
 
         // --- SISTEMA DE SONIDO ---
         const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -138,6 +131,10 @@
                     osc.type = 'sine'; osc.frequency.setValueAtTime(987.77, ahora); osc.frequency.setValueAtTime(1318.51, ahora + 0.08);
                     gain.gain.setValueAtTime(0.35, ahora); gain.gain.exponentialRampToValueAtTime(0.01, ahora + 0.22);
                     osc.start(ahora); osc.stop(ahora + 0.22);
+                } else if (tipo === 'alerta') {
+                    osc.type = 'triangle'; osc.frequency.setValueAtTime(440, ahora); osc.frequency.setValueAtTime(330, ahora + 0.12);
+                    gain.gain.setValueAtTime(0.35, ahora); gain.gain.exponentialRampToValueAtTime(0.01, ahora + 0.28);
+                    osc.start(ahora); osc.stop(ahora + 0.28);
                 } else if (tipo === 'error') {
                     osc.type = 'sawtooth'; osc.frequency.setValueAtTime(160, ahora);
                     gain.gain.setValueAtTime(0.3, ahora); gain.gain.exponentialRampToValueAtTime(0.01, ahora + 0.35);
@@ -163,7 +160,6 @@
                 gruposUnicos.forEach(g => { select.innerHTML += `<option value="${g}">${g}</option>`; });
             }
         }
-        cargarGrupos();
 
         // --- MOSTRAR/OCULTAR REPORTES ---
         function toggleReportes() {
@@ -172,6 +168,7 @@
             if (seccion.style.display === 'none') {
                 seccion.style.display = 'block';
                 btn.innerText = "🔼 Ocultar Registros";
+                generarTabla(); // Generar tabla al abrir por si acaso
             } else {
                 seccion.style.display = 'none';
                 btn.innerText = "📊 Ver Registros de Asistencia";
@@ -182,43 +179,50 @@
         async function enviarTelegram(chatId, mensaje) {
             if (!chatId || PARTE_1_TOKEN === 'PEGAR_AQUI_LOS_NUMEROS') return;
             const url = `https://api.telegram.org/bot${TOKEN_TELEGRAM}/sendMessage`;
-            try {
-                await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text: mensaje }) });
-            } catch (e) {}
+            try { await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text: mensaje }) }); } catch (e) {}
         }
 
-        // --- GENERAR TABLA FILTRADA ---
+        // --- GENERAR TABLA FILTRADA (AHORA CON FILTRO JAVASCRIPT A PRUEBA DE FALLOS) ---
         async function generarTabla() {
             const fecha = document.getElementById('filtro-fecha').value;
             const grupo = document.getElementById('filtro-grupo').value;
             const tablaCuerpo = document.getElementById('tabla-asistencias');
             const btnExcel = document.getElementById('btn-descarga-excel');
 
-            if (!fecha) { alert("Selecciona una fecha"); return; }
+            if (!fecha) return;
+
             tablaCuerpo.innerHTML = "<tr><td colspan='5'>Cargando datos...</td></tr>";
             btnExcel.style.display = 'none';
 
-            // Consulta uniendo asistencias con alumnos
-            let query = clienteSupabase
+            // Extraemos todos los registros de la fecha
+            const { data, error } = await clienteSupabase
                 .from('asistencias_escuela')
-                .select('hora_entrada, hora_salida, alumnos_escuela!inner(nombre, paterno, materno, grupo, celular)')
+                .select('hora_entrada, hora_salida, alumnos_escuela(nombre, paterno, materno, grupo, celular)')
                 .eq('fecha', fecha)
                 .order('hora_entrada', { ascending: false });
 
-            if (grupo !== "") { query = query.eq('alumnos_escuela.grupo', grupo); }
-
-            const { data, error } = await query;
-
             if (error || !data || data.length === 0) {
-                tablaCuerpo.innerHTML = "<tr><td colspan='5'>No hay registros para esta fecha y grupo.</td></tr>";
+                tablaCuerpo.innerHTML = "<tr><td colspan='5'>No hay registros para esta fecha.</td></tr>";
                 datosTablaActual = [];
                 return;
             }
 
-            datosTablaActual = data; 
+            // Aplicamos el filtro de grupo directamente en JavaScript para evitar errores de Supabase
+            let datosFiltrados = data;
+            if (grupo !== "") {
+                datosFiltrados = data.filter(registro => registro.alumnos_escuela.grupo === grupo);
+            }
+
+            if (datosFiltrados.length === 0) {
+                tablaCuerpo.innerHTML = "<tr><td colspan='5'>No hay registros para este grupo.</td></tr>";
+                datosTablaActual = [];
+                return;
+            }
+
+            datosTablaActual = datosFiltrados; 
             tablaCuerpo.innerHTML = ""; 
 
-            data.forEach((registro) => {
+            datosFiltrados.forEach((registro) => {
                 const al = registro.alumnos_escuela;
                 const nombreCompleto = `${al.paterno} ${al.materno} ${al.nombre}`;
                 const celularLimpio = al.celular ? al.celular.replace(/\D/g, '') : '';
@@ -277,17 +281,21 @@
                     reproducirSonido('exito');
                     statusText.innerText = `👋 SALIDA: ${alumno.nombre} ${alumno.paterno}`; statusText.style.color = "#2980b9";
                     enviarTelegram(alumno.telegram_chat_id, `🏫 AVISO ESCOLAR\n\n🔵 SALIDA REGISTRADA\nAlumno(a): ${alumno.nombre} ${alumno.paterno}\nGrupo: ${alumno.grupo}\nHora: ${horaActual}`);
+                } else {
+                    reproducirSonido('alerta');
+                    statusText.innerText = `⚠️ ${alumno.nombre} ya registró su salida hoy.`;
+                    statusText.style.color = "#d35400";
                 }
                 
-                // Si la tabla que está viendo es la de hoy, actualizarla automáticamente
-                if(document.getElementById('filtro-fecha').value === fechaHoy) { generarTabla(); }
+                // AHORA SÍ: Sin importar si fue Entrada, Salida o Repetido, la tabla siempre se actualiza.
+                if(document.getElementById('filtro-fecha').value === fechaHoyLocal) { generarTabla(); }
 
             } catch (error) {}
             reiniciarEscaner();
         }
 
         function onScanFailure(error) {}
-        function reiniciarEscaner() { setTimeout(() => { ultimoEscaneo = ""; procesandoEscaneo = false; statusText.innerText = "Escanea el siguiente QR."; statusText.style.color = "#2980b9"; }, 2500); }
+        function reiniciarEscaner() { setTimeout(() => { ultimoEscaneo = ""; procesandoEscaneo = false; statusText.innerText = "Cámara lista. Escanea el siguiente QR."; statusText.style.color = "#2980b9"; }, 2500); }
 
         // --- EXPORTAR A EXCEL ---
         function descargarExcel() {
@@ -331,7 +339,6 @@
             document.querySelectorAll('span').forEach(s => {
                 s.childNodes.forEach(n => { if (n.nodeType === 3 && n.nodeValue.includes("Select Camera")) n.nodeValue = "Seleccionar Cámara"; });
             });
-            // Traducir las opciones del menú desplegable
             document.querySelectorAll('option').forEach(opt => {
                 let texto = opt.innerText.toLowerCase();
                 if (texto.includes("facing back") || texto.includes("back camera")) { opt.innerText = "Cámara Trasera"; } 
@@ -340,7 +347,10 @@
             });
         }, 500);
         
+        // --- INICIALIZAR EL SISTEMA AL ABRIR LA PÁGINA ---
         escaner.render(onScanSuccess, onScanFailure);
+        cargarGrupos();
+        generarTabla(); // Carga la tabla de inmediato
     </script>
 </body>
 </html>
