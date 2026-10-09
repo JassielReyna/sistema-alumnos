@@ -52,8 +52,9 @@
 </head>
 <body>
 
-    <h1>🏫 Control de Acceso General</h1>
-    <h3>Escáner de Puerta Principal</h3>
+    <h1>🏫 Control de Acceso</h1>
+    <h3>Escáner Principal de Alumnos</h3>
+    <h3>Escuela Secundaria Simón Bolivar</h3>
     
     <div id="status">Iniciando sistema...</div>
     <div id="reader"></div>
@@ -103,14 +104,14 @@
         const LLAVE_PUBLICA = 'sb_publishable_rcACwicJA2Guh2Pth55S7g_qs8VcoI9';
         const clienteSupabase = supabase.createClient(URL_PROYECTO, LLAVE_PUBLICA);
 
-        // --- TOKEN DE TELEGRAM (RECUERDA PEGAR TUS CLAVES AQUÍ) ---
-        const PARTE_1_TOKEN = 'PEGAR_AQUI_LOS_NUMEROS'; 
-        const PARTE_2_TOKEN = 'PEGAR_AQUI_LAS_LETRAS'; 
+        // --- TOKEN DE TELEGRAM ---
+        const PARTE_1_TOKEN = '8887434969'; 
+        const PARTE_2_TOKEN = 'AAH7a_QS4GqqjdFu0xnW1VCBVpP6IDPstn4'; 
         const TOKEN_TELEGRAM = PARTE_1_TOKEN + ':' + PARTE_2_TOKEN;
 
         let datosTablaActual = []; 
+        let ultimoUpdateTelegram = 0; // Controla los mensajes leídos por el Auto-Vinculador
 
-        // Generar fecha en formato estricto YYYY-MM-DD
         function obtenerFechaLocal() {
             const hoy = new Date();
             const año = hoy.getFullYear();
@@ -155,7 +156,6 @@
             fps: 10, qrbox: function(vw, vh) { return { width: Math.floor(Math.min(vw, vh) * 0.85), height: Math.floor(Math.min(vw, vh) * 0.85) }; }
         }, false);
 
-        // --- CARGAR GRUPOS EN EL FILTRO ---
         async function cargarGrupos() {
             const { data } = await clienteSupabase.from('alumnos_escuela').select('grupo');
             if (data) {
@@ -165,7 +165,6 @@
             }
         }
 
-        // --- MOSTRAR/OCULTAR REPORTES ---
         function toggleReportes() {
             const seccion = document.getElementById('seccion-reportes');
             const btn = document.getElementById('btn-toggle');
@@ -184,7 +183,63 @@
             try { await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text: mensaje }) }); } catch (e) {}
         }
 
-        // --- GENERAR TABLA FILTRADA (CRUCE MANUAL Y SEGURO) ---
+        // ==========================================
+        // 🤖 ROBOT AUTO-VINCULADOR DE TELEGRAM 🤖
+        // ==========================================
+        async function procesarNuevosMensajesTelegram() {
+            if (PARTE_1_TOKEN === 'PEGAR_AQUI_LOS_NUMEROS') return;
+            
+            const url = `https://api.telegram.org/bot${TOKEN_TELEGRAM}/getUpdates?offset=${ultimoUpdateTelegram + 1}`;
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                if (data.ok && data.result.length > 0) {
+                    for (const update of data.result) {
+                        ultimoUpdateTelegram = update.update_id; // Marcar mensaje como leído
+                        
+                        if (update.message && update.message.text) {
+                            const textoRecibido = update.message.text.trim().toUpperCase();
+                            const chatIdPadre = update.message.chat.id;
+                            
+                            // Detectar si escribieron la palabra clave VINCULAR
+                            if (textoRecibido.startsWith('VINCULAR')) {
+                                // Extraer solo los números del mensaje
+                                const numeros = textoRecibido.replace(/\D/g, '');
+                                const celularIngresado = numeros.slice(-10); // Tomar los últimos 10
+                                
+                                if (celularIngresado.length === 10) {
+                                    // Buscar si existe ese celular en Supabase
+                                    const { data: alumnosEncontrados } = await clienteSupabase
+                                        .from('alumnos_escuela')
+                                        .select('id, nombre, paterno')
+                                        .eq('celular', celularIngresado);
+                                        
+                                    if (alumnosEncontrados && alumnosEncontrados.length > 0) {
+                                        let nombresVinculados = "";
+                                        // Actualizar el chat_id a todos los hermanos que tengan ese número
+                                        for (const al of alumnosEncontrados) {
+                                            await clienteSupabase
+                                                .from('alumnos_escuela')
+                                                .update({ telegram_chat_id: chatIdPadre.toString() })
+                                                .eq('id', al.id);
+                                            nombresVinculados += `- ${al.nombre} ${al.paterno}\n`;
+                                        }
+                                        enviarTelegram(chatIdPadre, `✅ ¡Vinculación Exitosa!\n\nRecibirá avisos de entrada y salida para:\n${nombresVinculados}`);
+                                    } else {
+                                        enviarTelegram(chatIdPadre, `❌ No encontramos a ningún alumno registrado con el celular ${celularIngresado}. Por favor verifique el número con control escolar.`);
+                                    }
+                                } else {
+                                    enviarTelegram(chatIdPadre, `⚠️ Formato incorrecto.\nPor favor escriba la palabra VINCULAR seguida de su celular a 10 dígitos.\n\nEjemplo:\nVINCULAR 5512345678`);
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (error) { console.error("Error en Auto-Vinculador", error); }
+        }
+
+        // --- GENERAR TABLA FILTRADA ---
         async function generarTabla() {
             const fecha = document.getElementById('filtro-fecha').value;
             const grupoFiltro = document.getElementById('filtro-grupo').value;
@@ -205,27 +260,18 @@
 
                 if (errorAsistencias || !asistencias || asistencias.length === 0) {
                     tablaCuerpo.innerHTML = "<tr><td colspan='5'>No hay registros para esta fecha.</td></tr>";
-                    datosTablaActual = [];
-                    return;
+                    datosTablaActual = []; return;
                 }
 
                 const idsAlumnos = [...new Set(asistencias.map(a => a.alumno_id))];
 
-                let queryAlumnos = clienteSupabase
-                    .from('alumnos_escuela')
-                    .select('id, nombre, paterno, materno, grupo, celular')
-                    .in('id', idsAlumnos);
-
-                if (grupoFiltro !== "") {
-                    queryAlumnos = queryAlumnos.eq('grupo', grupoFiltro);
-                }
-
+                let queryAlumnos = clienteSupabase.from('alumnos_escuela').select('id, nombre, paterno, materno, grupo, celular').in('id', idsAlumnos);
+                if (grupoFiltro !== "") { queryAlumnos = queryAlumnos.eq('grupo', grupoFiltro); }
                 const { data: alumnos, error: errorAlumnos } = await queryAlumnos;
 
                 if (errorAlumnos || !alumnos || alumnos.length === 0) {
                     tablaCuerpo.innerHTML = "<tr><td colspan='5'>No hay registros para este grupo en esta fecha.</td></tr>";
-                    datosTablaActual = [];
-                    return;
+                    datosTablaActual = []; return;
                 }
 
                 datosTablaActual = [];
@@ -233,60 +279,33 @@
 
                 asistencias.forEach(asistencia => {
                     const alumno = alumnos.find(a => a.id === asistencia.alumno_id);
-                    
                     if (alumno) { 
-                        datosTablaActual.push({
-                            hora_entrada: asistencia.hora_entrada,
-                            hora_salida: asistencia.hora_salida,
-                            alumnos_escuela: alumno
-                        });
-
+                        datosTablaActual.push({ hora_entrada: asistencia.hora_entrada, hora_salida: asistencia.hora_salida, alumnos_escuela: alumno });
                         const nombreCompleto = `${alumno.paterno} ${alumno.materno} ${alumno.nombre}`;
                         const celularLimpio = alumno.celular ? alumno.celular.replace(/\D/g, '') : '';
-                        
                         let linkWA = "Sin número";
                         if (celularLimpio.length >= 10) {
                             const mensajeWA = encodeURIComponent(`🏫 Aviso Escolar: Buen día, le informamos que ${alumno.nombre} ha registrado un movimiento en la entrada.`);
                             linkWA = `<a href="https://wa.me/52${celularLimpio}?text=${mensajeWA}" target="_blank" class="btn-wa">📲 WhatsApp</a>`;
                         }
-
-                        tablaCuerpo.innerHTML += `
-                            <tr>
-                                <td><strong>${alumno.grupo}</strong></td>
-                                <td class="nombre-alumno">${nombreCompleto}</td>
-                                <td class="hora-entrada">${asistencia.hora_entrada || "---"}</td>
-                                <td class="hora-salida">${asistencia.hora_salida || "---"}</td>
-                                <td>${linkWA}</td>
-                            </tr>`;
+                        tablaCuerpo.innerHTML += `<tr><td><strong>${alumno.grupo}</strong></td><td class="nombre-alumno">${nombreCompleto}</td><td class="hora-entrada">${asistencia.hora_entrada || "---"}</td><td class="hora-salida">${asistencia.hora_salida || "---"}</td><td>${linkWA}</td></tr>`;
                     }
                 });
 
-                if (datosTablaActual.length === 0) {
-                     tablaCuerpo.innerHTML = "<tr><td colspan='5'>No hay registros para este grupo en esta fecha.</td></tr>";
-                } else {
-                     btnExcel.style.display = 'inline-block';
-                }
+                if (datosTablaActual.length === 0) { tablaCuerpo.innerHTML = "<tr><td colspan='5'>No hay registros para este grupo en esta fecha.</td></tr>"; } 
+                else { btnExcel.style.display = 'inline-block'; }
 
-            } catch (error) {
-                console.error("Error generando tabla:", error);
-                tablaCuerpo.innerHTML = "<tr><td colspan='5'>Error al cargar los datos.</td></tr>";
-            }
+            } catch (error) { tablaCuerpo.innerHTML = "<tr><td colspan='5'>Error al cargar los datos.</td></tr>"; }
         }
 
         // --- ESCANEO EXITOSO ---
         async function onScanSuccess(codigoEscaneado) {
             if (procesandoEscaneo || codigoEscaneado === ultimoEscaneo) return;
-            procesandoEscaneo = true;
-            ultimoEscaneo = codigoEscaneado;
-
-            statusText.innerText = "Procesando...";
-            statusText.style.color = "orange";
+            procesandoEscaneo = true; ultimoEscaneo = codigoEscaneado;
+            statusText.innerText = "Procesando..."; statusText.style.color = "orange";
 
             try {
-                const { data: alumno, error: errorAlumno } = await clienteSupabase
-                    .from('alumnos_escuela')
-                    .select('*').eq('codigo', codigoEscaneado).single();
-
+                const { data: alumno, error: errorAlumno } = await clienteSupabase.from('alumnos_escuela').select('*').eq('codigo', codigoEscaneado).single();
                 if (errorAlumno || !alumno) {
                     reproducirSonido('error'); statusText.innerText = "❌ Error: Alumno no encontrado."; statusText.style.color = "red";
                     reiniciarEscaner(); return;
@@ -300,25 +319,17 @@
 
                 if (!asistencia) {
                     await clienteSupabase.from('asistencias_escuela').insert([{ alumno_id: alumno.id, fecha: fechaHoyEstricta, hora_entrada: horaActual }]);
-                    reproducirSonido('exito');
-                    statusText.innerText = `✅ ENTRADA: ${alumno.nombre} ${alumno.paterno} ${alumno.materno}`; statusText.style.color = "green";
+                    reproducirSonido('exito'); statusText.innerText = `✅ ENTRADA: ${alumno.nombre} ${alumno.paterno} ${alumno.materno}`; statusText.style.color = "green";
                     enviarTelegram(alumno.telegram_chat_id, `🏫 AVISO ESCOLAR\n\n🟢 ENTRADA REGISTRADA\nAlumno(a): ${alumno.nombre} ${alumno.paterno} ${alumno.materno}\nGrupo: ${alumno.grupo}\nHora: ${horaActual}`);
                 } else if (!asistencia.hora_salida) {
                     await clienteSupabase.from('asistencias_escuela').update({ hora_salida: horaActual }).eq('id', asistencia.id);
-                    reproducirSonido('exito');
-                    statusText.innerText = `👋 SALIDA: ${alumno.nombre} ${alumno.paterno} ${alumno.materno}`; statusText.style.color = "#2980b9";
+                    reproducirSonido('exito'); statusText.innerText = `👋 SALIDA: ${alumno.nombre} ${alumno.paterno} ${alumno.materno}`; statusText.style.color = "#2980b9";
                     enviarTelegram(alumno.telegram_chat_id, `🏫 AVISO ESCOLAR\n\n🔵 SALIDA REGISTRADA\nAlumno(a): ${alumno.nombre} ${alumno.paterno} ${alumno.materno}\nGrupo: ${alumno.grupo}\nHora: ${horaActual}`);
                 } else {
-                    reproducirSonido('alerta');
-                    statusText.innerText = `⚠️ ${alumno.nombre} ${alumno.paterno} ya registró su salida hoy.`;
-                    statusText.style.color = "#d35400";
+                    reproducirSonido('alerta'); statusText.innerText = `⚠️ ${alumno.nombre} ${alumno.paterno} ya registró su salida hoy.`; statusText.style.color = "#d35400";
                 }
                 
-                // Actualiza la tabla automáticamente SOLO si el panel ya está abierto y visualizando el día de hoy
-                if(document.getElementById('filtro-fecha').value === fechaHoyEstricta && document.getElementById('seccion-reportes').style.display !== 'none' && datosTablaActual.length > 0) { 
-                    generarTabla(); 
-                }
-
+                if(document.getElementById('filtro-fecha').value === fechaHoyEstricta && document.getElementById('seccion-reportes').style.display !== 'none' && datosTablaActual.length > 0) { generarTabla(); }
             } catch (error) {}
             reiniciarEscaner();
         }
@@ -326,19 +337,13 @@
         function onScanFailure(error) {}
         function reiniciarEscaner() { setTimeout(() => { ultimoEscaneo = ""; procesandoEscaneo = false; statusText.innerText = "Cámara lista. Escanea el siguiente QR."; statusText.style.color = "#2980b9"; }, 2500); }
 
-        // --- EXPORTAR A EXCEL ---
         function descargarExcel() {
             if (datosTablaActual.length === 0) return;
             const fecha = document.getElementById('filtro-fecha').value;
             const grupo = document.getElementById('filtro-grupo').value || "Todos";
-
             const bordeDelgado = { top: {style:"thin", color:{rgb:"CCCCCC"}}, bottom: {style:"thin", color:{rgb:"CCCCCC"}}, left: {style:"thin", color:{rgb:"CCCCCC"}}, right: {style:"thin", color:{rgb:"CCCCCC"}} };
             const estiloEncabezado = { fill: { fgColor: { rgb: "2C3E50" } }, font: { color: { rgb: "FFFFFF" }, bold: true }, alignment: { horizontal: "center", vertical: "center" }, border: bordeDelgado };
-
-            const filasExcel = [
-                [{ v: "Grupo", t: "s", s: estiloEncabezado }, { v: "Nombre del Alumno", t: "s", s: estiloEncabezado }, { v: "Hora de Entrada", t: "s", s: estiloEncabezado }, { v: "Hora de Salida", t: "s", s: estiloEncabezado }]
-            ];
-
+            const filasExcel = [[{ v: "Grupo", t: "s", s: estiloEncabezado }, { v: "Nombre del Alumno", t: "s", s: estiloEncabezado }, { v: "Hora de Entrada", t: "s", s: estiloEncabezado }, { v: "Hora de Salida", t: "s", s: estiloEncabezado }]];
             datosTablaActual.forEach(registro => {
                 const al = registro.alumnos_escuela;
                 const nombreCompleto = `${al.paterno} ${al.materno} ${al.nombre}`;
@@ -349,16 +354,13 @@
                     { v: registro.hora_salida || "-", t: "s", s: { font: { color: {rgb: "2980B9"}, bold: true }, alignment: { horizontal: "center" }, border: bordeDelgado } }
                 ]);
             });
-
             const hoja = XLSX.utils.aoa_to_sheet(filasExcel);
             hoja['!cols'] = [{ wch: 10 }, { wch: 40 }, { wch: 18 }, { wch: 18 }];
-            
             const libro = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(libro, hoja, "Asistencias");
             XLSX.writeFile(libro, `Asistencias_Escuela_${grupo}_${fecha}.xlsx`);
         }
 
-        // --- TRADUCTOR PROFUNDO DE CÁMARA ---
         setInterval(() => {
             document.querySelectorAll('button').forEach(btn => {
                 if (btn.innerText.includes("Request Camera Permissions")) btn.innerText = "Permitir acceso a la cámara";
@@ -376,9 +378,12 @@
             });
         }, 500);
         
-        // --- INICIALIZAR EL SISTEMA AL ABRIR LA PÁGINA ---
+        // --- INICIALIZAR ---
         escaner.render(onScanSuccess, onScanFailure);
         cargarGrupos();
+        
+        // Arrancar el Robot Auto-Vinculador cada 4 segundos
+        setInterval(procesarNuevosMensajesTelegram, 4000);
     </script>
 </body>
 </html>
